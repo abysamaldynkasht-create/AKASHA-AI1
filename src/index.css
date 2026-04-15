@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Tajawal:wght@400;500;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Tajawal", ui-sans-serif, system-ui, sans-serif;
+  --color-primary: #3B82F6;
+  --color-accent: #60A5FA;
+  --color-bg-dark: #0A0A0A;
+  --color-bg-card: #1A1A1A;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-dark text-[#F5F5DC] font-sans;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+  
+  .glass-dark {
+    @apply bg-black/40 backdrop-blur-2xl border border-white/5;
+  }
+
+  .btn-primary {
+    @apply bg-primary hover:bg-accent text-white font-bold py-3 px-6 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+  }
+
+  /* Prose overrides for dark mode */
+  .prose {
+    @apply text-[#F5F5DC] max-w-none;
+  }
+  .prose p {
+    @apply mb-4 last:mb-0;
+  }
+  .prose code {
+    @apply bg-white/10 px-1.5 py-0.5 rounded text-accent font-mono text-xs;
+  }
+  .prose pre {
+    @apply bg-black/50 p-4 rounded-xl border border-white/10 overflow-x-auto my-4;
+  }
+  .prose pre code {
+    @apply bg-transparent p-0 border-none text-[#F5F5DC];
+  }
+  .prose ul, .prose ol {
+    @apply my-4 mr-6 space-y-2;
+  }
+  .prose ul {
+    @apply list-disc;
+  }
+  .prose ol {
+    @apply list-decimal;
+  }
+}
+
+

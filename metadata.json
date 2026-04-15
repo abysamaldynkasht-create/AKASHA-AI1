@@ -1,0 +1,5 @@
+{
+  "name": "Akasha AI 0.1",
+  "description": "A modern AI assistant for learning, coding, and creative tasks. Built with Akasha AI technology.",
+  "requestFramePermissions": ["camera", "microphone"]
+}

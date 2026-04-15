@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (optional)
+    //   - email: string (required, email format)
+    //   - photoURL: string (optional, uri format)
+    //   - createdAt: string (required, date-time format)
+    //
+    // Collection: /users/{userId}/sessions/{sessionId}
+    // Fields:
+    //   - id: string (required)
+    //   - userId: string (required)
+    //   - title: string (required)
+    //   - createdAt: string (required)
+    //   - updatedAt: string (required)
+    //
+    // Collection: /users/{userId}/sessions/{sessionId}/messages/{messageId}
+    // Fields:
+    //   - id: string (required)
+    //   - sessionId: string (required)
+    //   - role: string (required, enum: user, assistant)
+    //   - content: string (required)
+    //   - createdAt: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+             request.auth.token.email == "akashaai249@gmail.com" && 
+             request.auth.token.email_verified == true;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidChatSession(data, userId) {
+      return data.keys().hasAll(['userId', 'title', 'createdAt', 'updatedAt']) &&
+             data.userId == userId &&
+             data.userId == request.auth.uid &&
+             isValidDateString(data.createdAt) &&
+             isValidDateString(data.updatedAt);
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['sessionId', 'role', 'content', 'createdAt']) &&
+             data.role in ['user', 'assistant'] &&
+             isValidDateString(data.createdAt);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow update: if isOwner(userId) && isValidUserProfile(request.resource.data);
+
+      match /sessions/{sessionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidChatSession(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidChatSession(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+
+        match /messages/{messageId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidChatMessage(request.resource.data);
+          allow update: if isOwner(userId) && isValidChatMessage(request.resource.data);
+          allow delete: if isOwner(userId);
+        }
+      }
+    }
+
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
