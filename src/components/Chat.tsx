@@ -3,7 +3,8 @@ import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
 import { getGeminiResponse } from '../lib/gemini';
-import { Send, Bot, User as UserIcon, Loader2 } from 'lucide-react';
+import { getUserMemory, updateLongTermMemory } from '../lib/memoryService';
+import { Send, Bot, User as UserIcon, Loader2, Brain } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { motion } from 'motion/react';
 import { LOGO_URL as DEFAULT_LOGO_URL } from '../constants';
@@ -19,6 +20,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userMemory, setUserMemory] = useState<string>('');
   const [logoUrl, setLogoUrl] = useState(DEFAULT_LOGO_URL);
   const [logoError, setLogoError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -67,6 +69,16 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
   }, [user, sessionId]);
 
   useEffect(() => {
+    const fetchMemory = async () => {
+      if (user) {
+        const memory = await getUserMemory(user.uid);
+        setUserMemory(memory);
+      }
+    };
+    fetchMemory();
+  }, [user]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -113,7 +125,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         parts: [{ text: m.content }]
       }));
 
-      const aiResponse = await getGeminiResponse(userMessage, history);
+      const aiResponse = await getGeminiResponse(userMessage, history, userMemory);
 
       // Add AI message
       await addDoc(collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages'), {
@@ -121,6 +133,11 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         role: 'assistant',
         content: aiResponse,
         createdAt: new Date().toISOString(),
+      });
+
+      // Update long term memory in background
+      updateLongTermMemory(user.uid, `المستخدم: ${userMessage}\nالمساعد: ${aiResponse}`, userMemory).then(newMemory => {
+        if (newMemory) setUserMemory(newMemory);
       });
 
     } catch (err: any) {

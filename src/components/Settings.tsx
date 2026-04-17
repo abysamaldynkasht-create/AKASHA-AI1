@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
-import { X, User, Save, CheckCircle, Moon, Sun, Mail, HelpCircle, CreditCard, Lock, Shield, Globe, ChevronRight } from 'lucide-react';
+import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getUserMemory } from '../lib/memoryService';
+import { X, User, Save, CheckCircle, Moon, Sun, Mail, HelpCircle, CreditCard, Lock, Shield, Globe, ChevronRight, Brain, Trash2, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface SettingsProps {
@@ -15,6 +16,30 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [memory, setMemory] = useState<string>('');
+  const [isLoadingMemory, setIsLoadingMemory] = useState(false);
+
+  React.useEffect(() => {
+    const fetchMemory = async () => {
+      if (user) {
+        setIsLoadingMemory(true);
+        const mem = await getUserMemory(user.uid);
+        setMemory(mem);
+        setIsLoadingMemory(false);
+      }
+    };
+    fetchMemory();
+  }, [user]);
+
+  const handleClearMemory = async () => {
+    if (!user || !window.confirm('هل أنت متأكد من مسح جميع الذكريات؟ سيبدأ المساعد من جديد تماماً.')) return;
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'config', 'memory'));
+      setMemory('');
+    } catch (error) {
+      console.error("Error clearing memory:", error);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +143,41 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
               >
                 <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${theme === 'dark' ? 'left-1' : 'left-7'}`} />
               </button>
+            </div>
+          </section>
+
+          {/* Smart Memory Section */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-[#606060] uppercase tracking-wider flex items-center gap-2">
+                <Brain size={14} className="text-primary" />
+                الذاكرة الذكية
+              </h3>
+              {memory && (
+                <button 
+                  onClick={handleClearMemory}
+                  className="text-[10px] text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+                >
+                  <Trash2 size={12} />
+                  مسح الذاكرة
+                </button>
+              )}
+            </div>
+            
+            <div className="p-4 bg-[#0F0F0F] border border-[#2A2A2A] rounded-2xl space-y-3">
+              <p className="text-[10px] text-[#606060] leading-relaxed">
+                تقوم هذه الميزة بحفظ المعلومات الهامة عنك وعن تفضيلاتك عبر جميع المحادثات لتوفير تجربة مخصصة دائماً.
+              </p>
+              
+              <div className="min-h-[60px] flex items-center justify-center p-3 bg-white/5 rounded-xl border border-white/5 italic">
+                {isLoadingMemory ? (
+                  <RefreshCw size={16} className="animate-spin text-[#404040]" />
+                ) : memory ? (
+                  <p className="text-xs text-[#A0A0A0] text-center">{memory}</p>
+                ) : (
+                  <p className="text-xs text-[#404040] text-center">لا توجد ذكريات محفوظة حالياً. ابدأ بالتحدث وسيتذكر Akasha تفضيلاتك!</p>
+                )}
+              </div>
             </div>
           </section>
 

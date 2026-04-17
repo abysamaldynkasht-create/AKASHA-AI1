@@ -29,6 +29,11 @@ service cloud.firestore {
     //   - content: string (required)
     //   - createdAt: string (required)
     //
+    // Collection: /users/{userId}/config/memory
+    // Fields:
+    //   - content: string (required)
+    //   - updatedAt: string (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -80,6 +85,13 @@ service cloud.firestore {
              isValidDateString(data.createdAt);
     }
 
+    function isValidUserMemory(data) {
+      return data.keys().hasAll(['content', 'updatedAt']) &&
+             data.content is string && 
+             data.content.size() <= 10000 &&
+             isValidDateString(data.updatedAt);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -87,6 +99,11 @@ service cloud.firestore {
       allow read: if isOwner(userId);
       allow create: if isOwner(userId) && isValidUserProfile(request.resource.data);
       allow update: if isOwner(userId) && isValidUserProfile(request.resource.data);
+
+      match /config/memory {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId) && isValidUserMemory(request.resource.data);
+      }
 
       match /sessions/{sessionId} {
         allow read: if isOwner(userId);

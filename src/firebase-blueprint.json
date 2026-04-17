@@ -36,12 +36,26 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the message was sent." }
       },
       "required": ["sessionId", "role", "content", "createdAt"]
+    },
+    "UserMemory": {
+      "title": "User Memory",
+      "description": "Stores summarized long-term memory for the user.",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string", "description": "The summarized memory content." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last time the memory was updated." }
+      },
+      "required": ["content", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User profile documents."
+    },
+    "/users/{userId}/config/memory": {
+      "schema": "UserMemory",
+      "description": "User long-term memory document."
     },
     "/users/{userId}/sessions/{sessionId}": {
       "schema": "ChatSession",
