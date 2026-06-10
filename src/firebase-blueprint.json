@@ -46,6 +46,19 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Last time the memory was updated." }
       },
       "required": ["content", "updatedAt"]
+    },
+    "UserAISettings": {
+      "title": "User AI Settings",
+      "description": "Stores customized AI model, API key, and identity configuration.",
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "enum": ["gemini", "openrouter", "groq"], "description": "The selected AI provider." },
+        "model": { "type": "string", "description": "The selected AI model name." },
+        "apiKey": { "type": "string", "description": "User's custom API key." },
+        "systemInstruction": { "type": "string", "description": "Custom system instructions / trained identity." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last time settings were updated." }
+      },
+      "required": ["provider", "model", "updatedAt"]
     }
   },
   "firestore": {
@@ -56,6 +69,10 @@
     "/users/{userId}/config/memory": {
       "schema": "UserMemory",
       "description": "User long-term memory document."
+    },
+    "/users/{userId}/config/ai": {
+      "schema": "UserAISettings",
+      "description": "User customized AI configuration."
     },
     "/users/{userId}/sessions/{sessionId}": {
       "schema": "ChatSession",

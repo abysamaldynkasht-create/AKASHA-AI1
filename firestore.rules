@@ -1,40 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: /users/{userId}
-    // Fields:
-    //   - uid: string (required)
-    //   - displayName: string (optional)
-    //   - email: string (required, email format)
-    //   - photoURL: string (optional, uri format)
-    //   - createdAt: string (required, date-time format)
-    //
-    // Collection: /users/{userId}/sessions/{sessionId}
-    // Fields:
-    //   - id: string (required)
-    //   - userId: string (required)
-    //   - title: string (required)
-    //   - createdAt: string (required)
-    //   - updatedAt: string (required)
-    //
-    // Collection: /users/{userId}/sessions/{sessionId}/messages/{messageId}
-    // Fields:
-    //   - id: string (required)
-    //   - sessionId: string (required)
-    //   - role: string (required, enum: user, assistant)
-    //   - content: string (required)
-    //   - createdAt: string (required)
-    //
-    // Collection: /users/{userId}/config/memory
-    // Fields:
-    //   - content: string (required)
-    //   - updatedAt: string (required)
-    //
-    // ===============================================================
+    // Default-deny catch-all safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
 
     // ===============================================================
     // Helper Functions
@@ -49,51 +19,52 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-             request.auth.token.email == "akashaai249@gmail.com" && 
-             request.auth.token.email_verified == true;
-    }
-
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
-    function isValidDateString(dateStr) {
-      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+             request.auth.token.email == "akashaai249@gmail.com";
     }
 
     // ===============================================================
     // Domain Validators
     // ===============================================================
     function isValidUserProfile(data) {
-      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
-             data.uid == request.auth.uid &&
-             isValidEmail(data.email) &&
-             isValidDateString(data.createdAt);
+      return data.get('uid', '') == request.auth.uid && 
+             data.get('email', '') is string &&
+             data.get('createdAt', '') is string;
     }
 
     function isValidChatSession(data, userId) {
-      return data.keys().hasAll(['userId', 'title', 'createdAt', 'updatedAt']) &&
-             data.userId == userId &&
-             data.userId == request.auth.uid &&
-             isValidDateString(data.createdAt) &&
-             isValidDateString(data.updatedAt);
+      return data.get('userId', '') == userId && 
+             data.get('userId', '') == request.auth.uid &&
+             data.get('title', '') is string &&
+             data.get('createdAt', '') is string &&
+             data.get('updatedAt', '') is string;
     }
 
     function isValidChatMessage(data) {
-      return data.keys().hasAll(['sessionId', 'role', 'content', 'createdAt']) &&
-             data.role in ['user', 'assistant'] &&
-             isValidDateString(data.createdAt);
+      return data.get('sessionId', '') is string &&
+             (data.get('role', '') == 'user' || data.get('role', '') == 'assistant') && 
+             data.get('content', '') is string &&
+             data.get('createdAt', '') is string;
     }
 
     function isValidUserMemory(data) {
-      return data.keys().hasAll(['content', 'updatedAt']) &&
-             data.content is string && 
-             data.content.size() <= 10000 &&
-             isValidDateString(data.updatedAt);
+      return data.get('content', '') is string && 
+             data.get('content', '').size() <= 10000 &&
+             data.get('updatedAt', '') is string;
+    }
+
+    function isValidUserAISettings(data) {
+      return data.get('provider', '') is string && 
+             (data.get('provider', '') == 'gemini' || data.get('provider', '') == 'openrouter' || data.get('provider', '') == 'groq') &&
+             data.get('model', '') is string &&
+             data.get('apiKey', '') is string &&
+             data.get('apiKey', '').size() <= 1000 &&
+             data.get('systemInstruction', '') is string &&
+             data.get('systemInstruction', '').size() <= 10000 &&
+             data.get('updatedAt', '') is string;
     }
 
     // ===============================================================
-    // Rules
+    // Client and Subcollection Access Controls
     // ===============================================================
     match /users/{userId} {
       allow read: if isOwner(userId);
@@ -102,7 +73,12 @@ service cloud.firestore {
 
       match /config/memory {
         allow read: if isOwner(userId);
-        allow write: if isOwner(userId) && isValidUserMemory(request.resource.data);
+        allow create, update: if isOwner(userId) && isValidUserMemory(request.resource.data);
+      }
+
+      match /config/ai {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidUserAISettings(request.resource.data);
       }
 
       match /sessions/{sessionId} {
@@ -117,6 +93,10 @@ service cloud.firestore {
           allow update: if isOwner(userId) && isValidChatMessage(request.resource.data);
           allow delete: if isOwner(userId);
         }
+      }
+
+      match /feedback/{feedbackId} {
+        allow read, create: if isOwner(userId);
       }
     }
 

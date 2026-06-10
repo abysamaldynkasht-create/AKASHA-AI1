@@ -79,6 +79,16 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
   }, [user]);
 
   useEffect(() => {
+    const fetchMemory = async () => {
+      if (user) {
+        const memory = await getUserMemory(user.uid);
+        setUserMemory(memory);
+      }
+    };
+    fetchMemory();
+  }, [user]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -125,7 +135,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         parts: [{ text: m.content }]
       }));
 
-      const aiResponse = await getGeminiResponse(userMessage, history, userMemory);
+      const aiResponse = await getGeminiResponse(userMessage, history, userMemory, user.uid);
 
       // Add AI message
       await addDoc(collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages'), {
