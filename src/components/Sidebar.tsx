@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { db, OperationType, handleFirestoreError, auth } from '../lib/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
-import { MessageSquare, Plus, Settings, LogOut, Trash2, Menu, X, Info, ShieldCheck, Sparkles } from 'lucide-react';
+import { MessageSquare, Plus, Settings, LogOut, Trash2, X, Info, ShieldCheck, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LOGO_URL as DEFAULT_LOGO_URL } from '../constants';
 
@@ -13,12 +13,22 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenAbout: () => void;
   onOpenAdmin: () => void;
+  isOpenMobile?: boolean;
+  onCloseMobile?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeSessionId, onSelectSession, onNewChat, onOpenSettings, onOpenAbout, onOpenAdmin }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ 
+  activeSessionId, 
+  onSelectSession, 
+  onNewChat, 
+  onOpenSettings, 
+  onOpenAbout, 
+  onOpenAdmin,
+  isOpenMobile = false,
+  onCloseMobile = () => {}
+}) => {
   const { user, profile, isAdmin } = useAuth();
   const [sessions, setSessions] = useState<any[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
   const [logoUrl, setLogoUrl] = useState(DEFAULT_LOGO_URL);
   const [logoError, setLogoError] = useState(false);
 
@@ -79,122 +89,166 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeSessionId, onSelectSessi
     auth.signOut();
   };
 
-  return (
-    <>
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 right-4 z-50 p-2 bg-primary text-white rounded-xl shadow-lg"
+  const SidebarContent = (
+    <div className="p-3.5 sm:p-4 flex flex-col gap-3 h-full select-none">
+      {/* Brand Header */}
+      <div className="flex items-center justify-between px-2 py-3 sm:py-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20 overflow-hidden flex-shrink-0">
+            {logoUrl && !logoError ? (
+              <img 
+                src={logoUrl} 
+                alt="Logo" 
+                className="w-full h-full object-cover" 
+                onError={() => setLogoError(true)}
+              />
+            ) : (
+              <span className="text-white font-black text-lg">AK</span>
+            )}
+          </div>
+          <div className="flex flex-col">
+            <h1 className="text-base sm:text-lg font-black tracking-tight leading-none">Akasha AI</h1>
+            <span className="text-[10px] text-primary font-bold tracking-widest uppercase mt-0.5">KAI-1 Model</span>
+          </div>
+        </div>
+
+        {/* Mobile close drawer button */}
+        <button
+          onClick={onCloseMobile}
+          className="lg:hidden p-2 text-[#A0A0A0] hover:text-white rounded-lg hover:bg-white/5 active:scale-95 transition-all"
+          aria-label="Close sidebar"
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* New Chat Action */}
+      <button
+        onClick={() => { onNewChat(); onCloseMobile(); }}
+        className="flex items-center justify-between w-full min-h-[46px] p-3 sm:p-3.5 rounded-2xl bg-primary text-white hover:bg-accent active:scale-[0.98] transition-all text-sm font-bold shadow-lg shadow-primary/20"
       >
-        {isOpen ? <X size={24} /> : <Menu size={24} />}
+        <div className="flex items-center gap-2.5">
+          <Plus size={18} />
+          <span>محادثة جديدة</span>
+        </div>
+        <Sparkles size={16} className="opacity-70" />
       </button>
 
-      <AnimatePresence>
-        {(isOpen || window.innerWidth >= 1024) && (
-          <motion.div
-            initial={{ x: 300 }}
-            animate={{ x: 0 }}
-            exit={{ x: 300 }}
-            className={`fixed lg:relative z-40 w-72 h-full bg-bg-dark border-l border-white/5 flex flex-col text-[#F5F5DC] transition-all duration-300`}
-          >
-            <div className="p-4 flex flex-col gap-4 h-full">
-              <div className="flex items-center gap-3 px-2 py-6">
-                <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20 overflow-hidden">
-                  {logoUrl && !logoError ? (
-                    <img 
-                      src={logoUrl} 
-                      alt="Logo" 
-                      className="w-full h-full object-cover" 
-                      onError={() => setLogoError(true)}
-                    />
-                  ) : (
-                    <span className="text-white font-black text-lg">AK</span>
-                  )}
-                </div>
-                <div className="flex flex-col">
-                  <h1 className="text-lg font-black tracking-tighter leading-none">Akasha AI</h1>
-                  <span className="text-[10px] text-primary font-bold tracking-widest uppercase">Version 0.1</span>
-                </div>
+      {/* Recent Chats List */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-2">
+        <p className="text-[10px] font-black text-[#606060] uppercase tracking-widest px-3 mb-1">المحادثات الأخيرة</p>
+        
+        {sessions.length === 0 ? (
+          <div className="text-center py-8 px-4 text-[#606060] text-xs">
+            لا توجد محادثات سابقة بعد.
+          </div>
+        ) : (
+          sessions.map((session) => (
+            <div
+              key={session.id}
+              onClick={() => { onSelectSession(session.id); onCloseMobile(); }}
+              className={`group flex items-center justify-between min-h-[42px] p-2.5 sm:p-3 rounded-xl cursor-pointer transition-all text-xs sm:text-sm active:scale-[0.99] ${
+                activeSessionId === session.id 
+                  ? 'bg-primary/15 text-primary border border-primary/25 font-bold shadow-sm' 
+                  : 'text-[#A0A0A0] hover:bg-white/5 hover:text-[#F5F5DC]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 truncate max-w-[85%]">
+                <MessageSquare size={16} className={`flex-shrink-0 ${activeSessionId === session.id ? 'text-primary' : 'text-[#606060]'}`} />
+                <span className="truncate">{session.title || 'محادثة جديدة'}</span>
               </div>
-
               <button
-                onClick={() => { onNewChat(); setIsOpen(false); }}
-                className="flex items-center justify-between w-full p-4 rounded-2xl bg-primary text-white hover:bg-accent transition-all text-sm font-bold shadow-lg shadow-primary/20"
+                onClick={(e) => deleteSession(e, session.id)}
+                className="opacity-70 sm:opacity-0 group-hover:opacity-100 p-1.5 hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-all flex-shrink-0"
+                title="حذف المحادثة"
               >
-                <div className="flex items-center gap-3">
-                  <Plus size={18} />
-                  محادثة جديدة
-                </div>
-                <Sparkles size={16} className="opacity-50" />
+                <Trash2 size={14} />
               </button>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-4">
-                <p className="text-[10px] font-black text-[#404040] uppercase tracking-widest px-3 mb-2">المحادثات الأخيرة</p>
-                {sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    onClick={() => { onSelectSession(session.id); setIsOpen(false); }}
-                    className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all text-sm ${
-                      activeSessionId === session.id 
-                        ? 'bg-primary/10 text-primary border border-primary/20' 
-                        : 'text-[#A0A0A0] hover:bg-white/5 hover:text-[#F5F5DC]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 truncate">
-                      <MessageSquare size={16} className={activeSessionId === session.id ? 'text-primary' : 'text-[#404040]'} />
-                      <span className="truncate font-medium">{session.title}</span>
-                    </div>
-                    <button
-                      onClick={(e) => deleteSession(e, session.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 transition-all"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-auto pt-4 border-t border-white/5 flex flex-col gap-1">
-                {isAdmin && (
-                  <button
-                    onClick={onOpenAdmin}
-                    className="flex items-center gap-3 w-full p-3 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-all text-sm font-bold mb-1"
-                  >
-                    <ShieldCheck size={18} />
-                    لوحة الإدارة
-                  </button>
-                )}
-                <button
-                  onClick={onOpenAbout}
-                  className="flex items-center gap-3 w-full p-3 rounded-xl hover:bg-white/5 transition-all text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
-                >
-                  <Info size={18} />
-                  حول Akasha AI
-                </button>
-                <button
-                  onClick={onOpenSettings}
-                  className="flex items-center gap-3 w-full p-3 rounded-xl hover:bg-white/5 transition-all text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
-                >
-                  <Settings size={18} />
-                  الإعدادات
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-3 w-full p-3 rounded-xl hover:bg-red-500/10 transition-all text-sm text-red-400 hover:text-red-300"
-                >
-                  <LogOut size={18} />
-                  تسجيل الخروج
-                </button>
-                
-                <div className="flex items-center gap-3 p-3 mt-2 glass-dark rounded-2xl border border-white/5">
-                  <img src={profile?.photoURL || `https://ui-avatars.com/api/?name=${profile?.displayName}`} className="w-9 h-9 rounded-xl" alt="Profile" />
-                  <div className="flex flex-col truncate">
-                    <span className="text-sm font-bold truncate">{profile?.displayName}</span>
-                    <span className="text-[10px] text-[#606060] truncate">{profile?.email}</span>
-                  </div>
-                </div>
-              </div>
             </div>
-          </motion.div>
+          ))
+        )}
+      </div>
+
+      {/* Bottom Footer Actions */}
+      <div className="mt-auto pt-3 border-t border-white/5 flex flex-col gap-1">
+        {isAdmin && (
+          <button
+            onClick={() => { onOpenAdmin(); onCloseMobile(); }}
+            className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 active:scale-[0.98] transition-all text-xs sm:text-sm font-bold"
+          >
+            <ShieldCheck size={18} />
+            <span>لوحة الإدارة</span>
+          </button>
+        )}
+        <button
+          onClick={() => { onOpenAbout(); onCloseMobile(); }}
+          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
+        >
+          <Info size={18} />
+          <span>حول Akasha AI</span>
+        </button>
+        <button
+          onClick={() => { onOpenSettings(); onCloseMobile(); }}
+          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
+        >
+          <Settings size={18} />
+          <span>الإعدادات</span>
+        </button>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-red-500/10 active:scale-[0.98] transition-all text-xs sm:text-sm text-red-400 hover:text-red-300"
+        >
+          <LogOut size={18} />
+          <span>تسجيل الخروج</span>
+        </button>
+        
+        {/* User profile snippet */}
+        <div className="flex items-center gap-2.5 p-2.5 mt-1 bg-white/[0.02] rounded-2xl border border-white/5">
+          <img 
+            src={profile?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.displayName || 'User')}&background=1A1A1A&color=F5F5DC`} 
+            className="w-8 h-8 rounded-xl object-cover flex-shrink-0" 
+            alt="Profile" 
+          />
+          <div className="flex flex-col truncate">
+            <span className="text-xs sm:text-sm font-bold truncate text-[#F5F5DC]">{profile?.displayName || 'مستخدم Akasha'}</span>
+            <span className="text-[10px] text-[#606060] truncate">{profile?.email}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Permanent Desktop Sidebar */}
+      <aside className="hidden lg:flex w-72 h-full bg-bg-dark border-l border-white/5 flex-col text-[#F5F5DC] flex-shrink-0">
+        {SidebarContent}
+      </aside>
+
+      {/* Mobile Slide-Over Drawer with Backdrop */}
+      <AnimatePresence>
+        {isOpenMobile && (
+          <>
+            {/* Backdrop Blur Overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={onCloseMobile}
+              className="lg:hidden fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
+            />
+
+            {/* Slide-In Drawer */}
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+              className="lg:hidden fixed top-0 right-0 bottom-0 z-50 w-[82vw] max-w-xs h-full bg-[#121212] border-l border-white/10 shadow-2xl flex flex-col text-[#F5F5DC]"
+            >
+              {SidebarContent}
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </>
