@@ -3,7 +3,7 @@ import { db } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 // New KAI-1 Endpoints
-export const KAI1_BASE_URL = "https://antibodies-appliances-frequencies-clone.trycloudflare.com";
+export const KAI1_BASE_URL = "https://ted-jeffrey-numerical-lot.trycloudflare.com";
 export const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
 export const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
 
