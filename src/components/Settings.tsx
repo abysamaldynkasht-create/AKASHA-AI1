@@ -151,7 +151,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     try {
       await setDoc(doc(db, 'users', user.uid, 'config', 'ai'), {
         provider: 'gemini',
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3.7-flash',
         apiKey: '',
         systemInstruction,
         updatedAt: new Date().toISOString(),

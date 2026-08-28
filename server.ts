@@ -11,12 +11,21 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Initialize Gemini SDK with server-side environment key
 const geminiApiKey = process.env.GEMINI_API_KEY || "";
-const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
+const ai = geminiApiKey
+  ? new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
 
 // KAI-1 URL configurations
-const KAI1_BASE_URL = "https://maiden-sacramento-tab-medications.trycloudflare.com";
-const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
+const KAI1_BASE_URL = "https://kai1-backend.up.railway.app";
 const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
+const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
 
 // Server-side default plan limits
 const PLANS_BACKEND_CONFIG: Record<string, { usage_limit: number; image_limit: number; name: string; priority: boolean }> = {
@@ -346,43 +355,102 @@ app.post('/api/chat/stream', async (req, res) => {
 
     let responseDelivered = false;
 
-    // 7. Try KAI-1 Direct Stream Endpoint first if no heavy multimodal images
+    // 7. Try KAI-1 Railway Endpoint (Chat & Stream) if no heavy multimodal images
     if (!hasImageAttachment) {
-      try {
-        const formattedHistory = history.map((msg: any) => ({
-          role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.parts?.[0]?.text || msg.content || '',
-        }));
+      const userSessionId = req.body.sessionId || req.body.session_id || null;
 
-        const kaiResponse = await fetch(KAI1_STREAM_URL, {
+      // Try /api/kai1/chat endpoint first
+      try {
+        const kaiResponse = await fetch(KAI1_CHAT_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: promptAugmented || 'مرحباً',
-            history: formattedHistory,
+            session_id: userSessionId,
+            history: history.map((msg: any) => ({
+              role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
+              content: msg.parts?.[0]?.text || msg.content || '',
+            })),
             system_instruction: fullInstruction,
           }),
         });
 
-        if (kaiResponse.ok && kaiResponse.body) {
-          const reader = kaiResponse.body.getReader();
-          const decoder = new TextDecoder();
-          let streamText = '';
+        if (kaiResponse.ok) {
+          const contentType = kaiResponse.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await kaiResponse.json();
+            const reply = data.reply || data.message || data.response || (typeof data === 'string' ? data : '');
+            if (reply) {
+              // Stream text to client with session_id metadata
+              res.write(`data: ${JSON.stringify({ 
+                type: 'chunk', 
+                text: reply,
+                session_id: data.session_id || userSessionId 
+              })}\n\n`);
+              responseDelivered = true;
+            }
+          } else if (kaiResponse.body) {
+            // Streaming response
+            const reader = kaiResponse.body.getReader();
+            const decoder = new TextDecoder();
+            let streamText = '';
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            streamText += chunk;
-            res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
-          }
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value, { stream: true });
+              streamText += chunk;
+              res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
+            }
 
-          if (streamText.trim().length > 0) {
-            responseDelivered = true;
+            if (streamText.trim().length > 0) {
+              responseDelivered = true;
+            }
           }
         }
-      } catch (streamErr) {
-        console.warn('KAI-1 server stream error, falling back:', streamErr);
+      } catch (kaiChatErr) {
+        console.warn('KAI-1 chat endpoint error, trying stream fallback:', kaiChatErr);
+      }
+
+      // Try stream endpoint fallback if not delivered
+      if (!responseDelivered) {
+        try {
+          const formattedHistory = history.map((msg: any) => ({
+            role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.parts?.[0]?.text || msg.content || '',
+          }));
+
+          const kaiStreamRes = await fetch(KAI1_STREAM_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: promptAugmented || 'مرحباً',
+              session_id: userSessionId,
+              history: formattedHistory,
+              system_instruction: fullInstruction,
+            }),
+          });
+
+          if (kaiStreamRes.ok && kaiStreamRes.body) {
+            const reader = kaiStreamRes.body.getReader();
+            const decoder = new TextDecoder();
+            let streamText = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value, { stream: true });
+              streamText += chunk;
+              res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
+            }
+
+            if (streamText.trim().length > 0) {
+              responseDelivered = true;
+            }
+          }
+        } catch (streamErr) {
+          console.warn('KAI-1 stream endpoint error:', streamErr);
+        }
       }
     }
 
@@ -407,7 +475,7 @@ app.post('/api/chat/stream', async (req, res) => {
           currentParts.push({ text: 'تحليل المرفق' });
         }
 
-        const modelToUse = isPro ? 'gemini-3.7-flash' : 'gemini-2.5-flash';
+        const modelToUse = 'gemini-3.7-flash';
         const fallbackResponse = await ai.models.generateContent({
           model: modelToUse,
           contents: [...history, { role: 'user', parts: currentParts }],

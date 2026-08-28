@@ -4,9 +4,9 @@ import { doc, getDoc } from "firebase/firestore";
 import { UserSubscription } from "../types";
 
 // KAI-1 Endpoints
-export const KAI1_BASE_URL = "https://maiden-sacramento-tab-medications.trycloudflare.com";
-export const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
+export const KAI1_BASE_URL = "https://kai1-backend.up.railway.app";
 export const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
+export const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
 
 // Default fallback key from environment
 const defaultApiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
@@ -104,6 +104,9 @@ export const getAIResponseStream = async (
           if (line.startsWith("data: ")) {
             try {
               const parsed = JSON.parse(line.slice(6));
+              if (parsed.session_id && typeof window !== 'undefined') {
+                localStorage.setItem("kai1_session_id", parsed.session_id);
+              }
               if (parsed.type === "chunk" && parsed.text) {
                 accumulatedText += parsed.text;
                 if (onChunk) onChunk(accumulatedText);
@@ -152,9 +155,44 @@ export const getAIResponseStream = async (
   }));
 
   if (!hasImageAttachment) {
+    const savedSessionId = typeof window !== 'undefined' ? localStorage.getItem("kai1_session_id") || null : null;
+
+    // 1. Try KAI-1 /api/kai1/chat
+    try {
+      const chatRes = await fetch(KAI1_CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: augmentedPrompt || "مرحباً",
+          session_id: savedSessionId,
+          history: formattedHistory,
+          system_instruction: fullInstruction,
+        }),
+      });
+
+      if (chatRes.ok) {
+        const contentType = chatRes.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await chatRes.json();
+          if (data?.session_id && typeof window !== 'undefined') {
+            localStorage.setItem("kai1_session_id", data.session_id);
+          }
+          const reply = data.reply || data.message || data.response || (typeof data === 'string' ? data : '');
+          if (reply) {
+            if (onChunk) onChunk(reply);
+            return reply;
+          }
+        }
+      }
+    } catch (chatErr) {
+      console.warn("Direct KAI-1 chat endpoint error:", chatErr);
+    }
+
+    // 2. Try KAI-1 /api/kai1/stream
     try {
       const payload = {
         message: augmentedPrompt || "مرحباً",
+        session_id: savedSessionId,
         history: formattedHistory,
         system_instruction: fullInstruction,
       };
@@ -195,7 +233,7 @@ export const getAIResponseStream = async (
   }
 
   const genAI = new GoogleGenAI({ apiKey: defaultApiKey });
-  const modelToUse = isPro ? 'gemini-3.7-flash' : 'gemini-2.5-flash';
+  const modelToUse = 'gemini-3.7-flash';
 
   const currentParts: any[] = [];
   for (const att of attachments) {
@@ -236,3 +274,29 @@ export const getGeminiResponse = async (
 ): Promise<string> => {
   return getAIResponseStream(prompt, history as any, userMemory, userId, attachments, undefined, clientSubscription);
 };
+
+/**
+ * Standard KAI-1 message dispatcher
+ */
+export async function sendMessage(userMessage: string): Promise<string> {
+  const sessionId = typeof window !== 'undefined' ? localStorage.getItem("kai1_session_id") || null : null;
+
+  const response = await fetch(`${KAI1_BASE_URL}/api/kai1/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: userMessage,
+      session_id: sessionId
+    })
+  });
+
+  const data = await response.json();
+
+  if (data?.session_id && typeof window !== 'undefined') {
+    localStorage.setItem("kai1_session_id", data.session_id);
+  }
+
+  return data.reply || data.message || '';
+}

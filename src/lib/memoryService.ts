@@ -36,7 +36,7 @@ export const updateLongTermMemory = async (userId: string, currentExchange: stri
       الذاكرة المحدثة النهائية:
     `;
 
-    const modelsToTry = ["gemini-2.5-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
+    const modelsToTry = ["gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"];
     for (const model of modelsToTry) {
       try {
         const response = await genAI.models.generateContent({
