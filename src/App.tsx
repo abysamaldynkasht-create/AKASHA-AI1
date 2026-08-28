@@ -6,6 +6,7 @@ import { Settings } from './components/Settings';
 import { About } from './components/About';
 import { AdminPanel } from './components/AdminPanel';
 import { LandingPage } from './components/LandingPage';
+import { SubscriptionModal } from './components/SubscriptionModal';
 import { signInWithGoogle, signInWithEmail, signUpWithEmail, resetPassword, db } from './lib/firebase';
 import { LOGO_URL as DEFAULT_LOGO_URL } from './constants';
 import { doc, onSnapshot as onFirestoreSnapshot } from 'firebase/firestore';
@@ -13,7 +14,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LogIn, Sparkles, ShieldCheck, Mail, ArrowLeft, Key, UserPlus, Eye, EyeOff, Menu, Plus } from 'lucide-react';
 
 const MainApp = () => {
-  const { user, loading, isAdmin } = useAuth();
+  const { 
+    user, 
+    loading, 
+    isAdmin, 
+    isPricingModalOpen, 
+    closePricingModal 
+  } = useAuth();
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -477,6 +485,12 @@ const MainApp = () => {
           )}
           {isAdminOpen && (
             <AdminPanel onClose={() => setIsAdminOpen(false)} />
+          )}
+          {isPricingModalOpen && (
+            <SubscriptionModal 
+              isOpen={isPricingModalOpen} 
+              onClose={closePricingModal} 
+            />
           )}
         </AnimatePresence>
       </main>

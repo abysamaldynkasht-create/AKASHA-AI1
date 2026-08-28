@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { db, OperationType, handleFirestoreError, auth } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
-import { MessageSquare, Plus, Settings, LogOut, Trash2, X, Info, ShieldCheck, Sparkles } from 'lucide-react';
+import { 
+  MessageSquare, Plus, Settings, LogOut, Trash2, X, Info, 
+  ShieldCheck, Sparkles, Crown, Zap, AlertCircle 
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LOGO_URL as DEFAULT_LOGO_URL } from '../constants';
 
@@ -27,7 +30,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpenMobile = false,
   onCloseMobile = () => {}
 }) => {
-  const { user, profile, isAdmin } = useAuth();
+  const { 
+    user, 
+    profile, 
+    isAdmin, 
+    isPro, 
+    effectivePlan, 
+    usageCount, 
+    usageLimit, 
+    remainingRequests,
+    imageCount,
+    imageLimit,
+    remainingImages,
+    openPricingModal 
+  } = useAuth();
+
   const [sessions, setSessions] = useState<any[]>([]);
   const [logoUrl, setLogoUrl] = useState(DEFAULT_LOGO_URL);
   const [logoError, setLogoError] = useState(false);
@@ -89,6 +106,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     auth.signOut();
   };
 
+  const formatExpiry = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    try {
+      return new Date(dateStr).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
   const SidebarContent = (
     <div className="p-3.5 sm:p-4 flex flex-col gap-3 h-full select-none">
       {/* Brand Header */}
@@ -108,7 +134,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="flex flex-col">
             <h1 className="text-base sm:text-lg font-black tracking-tight leading-none">Akasha AI</h1>
-            <span className="text-[10px] text-primary font-bold tracking-widest uppercase mt-0.5">KAI-1 Model</span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] text-primary font-bold tracking-wider uppercase">
+                {isPro ? 'KAI-1 PRO' : 'KAI-1 STD'}
+              </span>
+              {isPro && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </div>
           </div>
         </div>
 
@@ -134,8 +167,100 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <Sparkles size={16} className="opacity-70" />
       </button>
 
+      {/* Subscription Card & Usage Quota */}
+      <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {isPro ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/20 text-primary border border-primary/30 text-[10px] font-black">
+                <Crown size={11} />
+                <span>PRO ACTIVE</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/10 text-[#A0A0A0] text-[10px] font-bold">
+                <span>FREE</span>
+              </span>
+            )}
+            {isPro && profile?.subscription_end && (
+              <span className="text-[10px] text-[#707070]">
+                حتى {formatExpiry(profile.subscription_end)}
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={() => { openPricingModal(); onCloseMobile(); }}
+            className={`text-[11px] font-bold transition-all ${
+              isPro 
+                ? 'text-[#A0A0A0] hover:text-[#F5F5DC]' 
+                : 'text-primary hover:underline flex items-center gap-1'
+            }`}
+          >
+            {isPro ? 'إدارة الخطة' : 'ترقية إلى PRO'}
+            {!isPro && <Zap size={11} />}
+          </button>
+        </div>
+
+        {/* Quota Progress Bars */}
+        <div className="space-y-2 pt-0.5">
+          {/* Messages Quota */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px] text-[#A0A0A0]">
+              <span>الرسائل اليومية:</span>
+              <span className="font-mono font-bold text-[#F5F5DC]">
+                {usageCount} / {usageLimit}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/5">
+              <div 
+                className={`h-full transition-all duration-300 rounded-full ${
+                  usageCount >= usageLimit 
+                    ? 'bg-red-500' 
+                    : (usageCount / usageLimit) > 0.8 
+                    ? 'bg-amber-500' 
+                    : 'bg-primary'
+                }`}
+                style={{ width: `${Math.min(100, (usageCount / Math.max(1, usageLimit)) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Images Quota */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px] text-[#A0A0A0]">
+              <span>رفع الصور اليومي:</span>
+              <span className="font-mono font-bold text-[#F5F5DC]">
+                {imageCount} / {imageLimit}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/5">
+              <div 
+                className={`h-full transition-all duration-300 rounded-full ${
+                  imageCount >= imageLimit 
+                    ? 'bg-red-500' 
+                    : (imageCount / imageLimit) > 0.8 
+                    ? 'bg-amber-500' 
+                    : 'bg-emerald-500'
+                }`}
+                style={{ width: `${Math.min(100, (imageCount / Math.max(1, imageLimit)) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {!isPro && (
+          <button
+            onClick={() => { openPricingModal(); onCloseMobile(); }}
+            className="w-full py-1.5 px-2.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all mt-1"
+          >
+            <Crown size={12} />
+            <span>Upgrade to PRO - فتح KAI-1 الكامل</span>
+          </button>
+        )}
+      </div>
+
       {/* Recent Chats List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-2">
+      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-1">
         <p className="text-[10px] font-black text-[#606060] uppercase tracking-widest px-3 mb-1">المحادثات الأخيرة</p>
         
         {sessions.length === 0 ? (
@@ -170,49 +295,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom Footer Actions */}
-      <div className="mt-auto pt-3 border-t border-white/5 flex flex-col gap-1">
+      <div className="mt-auto pt-2 border-t border-white/5 flex flex-col gap-1">
         {isAdmin && (
           <button
             onClick={() => { onOpenAdmin(); onCloseMobile(); }}
-            className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 active:scale-[0.98] transition-all text-xs sm:text-sm font-bold"
+            className="flex items-center gap-2.5 w-full min-h-[38px] p-2.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 active:scale-[0.98] transition-all text-xs sm:text-sm font-bold"
           >
-            <ShieldCheck size={18} />
+            <ShieldCheck size={17} />
             <span>لوحة الإدارة</span>
           </button>
         )}
         <button
           onClick={() => { onOpenAbout(); onCloseMobile(); }}
-          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
+          className="flex items-center gap-2.5 w-full min-h-[38px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
         >
-          <Info size={18} />
+          <Info size={17} />
           <span>حول Akasha AI</span>
         </button>
         <button
           onClick={() => { onOpenSettings(); onCloseMobile(); }}
-          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
+          className="flex items-center gap-2.5 w-full min-h-[38px] p-2.5 rounded-xl hover:bg-white/5 active:scale-[0.98] transition-all text-xs sm:text-sm text-[#A0A0A0] hover:text-[#F5F5DC]"
         >
-          <Settings size={18} />
+          <Settings size={17} />
           <span>الإعدادات</span>
         </button>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-2.5 w-full min-h-[40px] p-2.5 rounded-xl hover:bg-red-500/10 active:scale-[0.98] transition-all text-xs sm:text-sm text-red-400 hover:text-red-300"
+          className="flex items-center gap-2.5 w-full min-h-[38px] p-2.5 rounded-xl hover:bg-red-500/10 active:scale-[0.98] transition-all text-xs sm:text-sm text-red-400 hover:text-red-300"
         >
-          <LogOut size={18} />
+          <LogOut size={17} />
           <span>تسجيل الخروج</span>
         </button>
         
         {/* User profile snippet */}
-        <div className="flex items-center gap-2.5 p-2.5 mt-1 bg-white/[0.02] rounded-2xl border border-white/5">
-          <img 
-            src={profile?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.displayName || 'User')}&background=1A1A1A&color=F5F5DC`} 
-            className="w-8 h-8 rounded-xl object-cover flex-shrink-0" 
-            alt="Profile" 
-          />
-          <div className="flex flex-col truncate">
-            <span className="text-xs sm:text-sm font-bold truncate text-[#F5F5DC]">{profile?.displayName || 'مستخدم Akasha'}</span>
-            <span className="text-[10px] text-[#606060] truncate">{profile?.email}</span>
+        <div 
+          onClick={() => { openPricingModal(); onCloseMobile(); }}
+          className="flex items-center justify-between p-2.5 mt-1 bg-white/[0.02] hover:bg-white/[0.05] rounded-2xl border border-white/5 cursor-pointer transition-all"
+        >
+          <div className="flex items-center gap-2.5 truncate">
+            <img 
+              src={profile?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.displayName || 'User')}&background=1A1A1A&color=F5F5DC`} 
+              className="w-8 h-8 rounded-xl object-cover flex-shrink-0" 
+              alt="Profile" 
+            />
+            <div className="flex flex-col truncate">
+              <span className="text-xs sm:text-sm font-bold truncate text-[#F5F5DC]">{profile?.displayName || 'مستخدم Akasha'}</span>
+              <span className="text-[10px] text-[#606060] truncate">{profile?.email}</span>
+            </div>
           </div>
+          
+          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md flex-shrink-0 ${
+            isPro ? 'bg-primary text-white' : 'bg-white/10 text-[#A0A0A0]'
+          }`}>
+            {isPro ? 'PRO' : 'FREE'}
+          </span>
         </div>
       </div>
     </div>

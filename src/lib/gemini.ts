@@ -1,9 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { db } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
+import { UserSubscription } from "../types";
 
-// New KAI-1 Endpoints
-export const KAI1_BASE_URL = "https://ted-jeffrey-numerical-lot.trycloudflare.com";
+// KAI-1 Endpoints
+export const KAI1_BASE_URL = "https://maiden-sacramento-tab-medications.trycloudflare.com";
 export const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
 export const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
 
@@ -18,8 +19,22 @@ export interface ChatAttachment {
   size?: number;
 }
 
+export class LimitExceededError extends Error {
+  plan: string;
+  usage_limit: number;
+  usage_count: number;
+  constructor(message: string, plan = 'free', usage_limit = 20, usage_count = 20) {
+    super(message);
+    this.name = 'LimitExceededError';
+    this.plan = plan;
+    this.usage_limit = usage_limit;
+    this.usage_count = usage_count;
+  }
+}
+
 /**
- * Streams response directly from KAI-1 model (Akasha AI) with fallback to Gemini Multimodal.
+ * Streams response via Backend Secure Proxy with full subscription verification,
+ * fallback to direct KAI-1 and Gemini.
  */
 export const getAIResponseStream = async (
   prompt: string,
@@ -27,7 +42,8 @@ export const getAIResponseStream = async (
   userMemory: string = "",
   userId: string = "",
   attachments: ChatAttachment[] = [],
-  onChunk?: (accumulatedText: string) => void
+  onChunk?: (accumulatedText: string) => void,
+  clientSubscription?: Partial<UserSubscription> | null
 ): Promise<string> => {
   // 1. Fetch user custom prompt/instruction from Firestore
   let customSystemInstruction = "";
@@ -44,16 +60,85 @@ export const getAIResponseStream = async (
     }
   }
 
-  // 2. Prepare full system instruction including long-term memory
+  // 2. Try Backend Secure Streaming Proxy first (Checks backend limits & handles authentication)
+  try {
+    const backendResponse = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        prompt,
+        history,
+        systemInstruction: customSystemInstruction,
+        userMemory,
+        attachments,
+        clientSubscription,
+      }),
+    });
+
+    if (backendResponse.status === 429) {
+      const errData = await backendResponse.json();
+      throw new LimitExceededError(
+        errData.message || "لقد استنفدت الحد المسموح به للرسائل.",
+        errData.plan,
+        errData.usage_limit,
+        errData.usage_count
+      );
+    }
+
+    if (backendResponse.ok && backendResponse.body) {
+      const reader = backendResponse.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              if (parsed.type === "chunk" && parsed.text) {
+                accumulatedText += parsed.text;
+                if (onChunk) onChunk(accumulatedText);
+              } else if (parsed.type === "error") {
+                console.warn("Stream event error:", parsed.error);
+              }
+            } catch (e) {
+              // Ignore line parse error
+            }
+          }
+        }
+      }
+
+      if (accumulatedText.trim().length > 0) {
+        return accumulatedText;
+      }
+    }
+  } catch (proxyError: any) {
+    if (proxyError instanceof LimitExceededError) {
+      throw proxyError;
+    }
+    console.warn("Backend proxy stream failed, falling back to direct pipeline:", proxyError);
+  }
+
+  // 3. Fallback to Direct KAI-1 / Gemini client pipeline
+  const isPro = clientSubscription?.plan === 'pro' && clientSubscription?.subscription_status === 'active';
+  const tierName = isPro ? 'KAI-1 Pro Ultra' : 'KAI-1 Standard';
   const baseInstruction =
     customSystemInstruction ||
-    `أنت Akasha AI (نموذج KAI-1)، المساعد الذكي التابع لمنظومة Akasha AI. تجيب بذكاء ودقة وسرعة وبأسلوب راقٍ وواضح، وتدعم اللغتين العربية والإنجليزية، وقادر على تحليل الصور والملفات والأكواد بدقة فائقة.`;
-  const memoryContext = userMemory ? `\n\n[الذاكرة طويلة المدى عن المستخدم]:\n${userMemory}` : "";
+    `أنت Akasha AI (نموذج ${tierName})، المساعد الذكي التابع لمنظومة Akasha AI. تجيب بذكاء ودقة وسرعة وبأسلوب راقٍ وواضح، وتدعم اللغتين العربية والإنجليزية.`;
+  const memoryContext = userMemory ? `\n\n[الذاكرة طويلة المدى]:\n${userMemory}` : "";
   const fullInstruction = `${baseInstruction}${memoryContext}`;
 
   const hasImageAttachment = attachments.some(a => a.isImage || a.type.startsWith('image/') || a.type === 'application/pdf');
 
-  // If text attachments exist, append their text content to the prompt
   let augmentedPrompt = prompt;
   const textAttachments = attachments.filter(a => !a.isImage && !a.type.startsWith('image/') && a.type !== 'application/pdf');
   if (textAttachments.length > 0) {
@@ -61,13 +146,11 @@ export const getAIResponseStream = async (
     augmentedPrompt = `${fileTexts}\n\n${prompt || 'يرجى مراجعة وتحليل هذا الملف.'}`;
   }
 
-  // Formatted history matching KAI-1 schema
   const formattedHistory = history.map((msg) => ({
     role: msg.role === "model" || msg.role === "assistant" ? "assistant" : "user",
     content: msg.parts[0]?.text || "",
   }));
 
-  // 3. If there are NO image attachments, try primary KAI-1 Streaming Endpoint first
   if (!hasImageAttachment) {
     try {
       const payload = {
@@ -78,9 +161,7 @@ export const getAIResponseStream = async (
 
       const response = await fetch(KAI1_STREAM_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
@@ -102,52 +183,20 @@ export const getAIResponseStream = async (
         if (accumulatedText.trim().length > 0) {
           return accumulatedText;
         }
-      } else {
-        console.warn(`KAI-1 stream returned status: ${response.status}. Attempting direct chat endpoint.`);
       }
     } catch (kaiError) {
-      console.warn("KAI-1 streaming error, attempting direct chat:", kaiError);
-    }
-
-    // 3.1 Try KAI-1 Direct Chat endpoint if stream was bypassed
-    try {
-      const chatPayload = {
-        message: augmentedPrompt || "مرحباً",
-        history: formattedHistory,
-        system_instruction: fullInstruction,
-      };
-
-      const chatResponse = await fetch(KAI1_CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(chatPayload),
-      });
-
-      if (chatResponse.ok) {
-        const data = await chatResponse.json();
-        const text = data?.reply || data?.response || data?.message || data?.text || (typeof data === "string" ? data : "");
-        if (text && text.trim().length > 0) {
-          if (onChunk) onChunk(text);
-          return text;
-        }
-      }
-    } catch (chatError) {
-      console.warn("KAI-1 chat endpoint error:", chatError);
+      console.warn("Direct KAI-1 stream error:", kaiError);
     }
   }
 
-  // 4. Secondary/Multimodal: Google Gemini SDK for multimodal vision & fallback
+  // 4. Gemini SDK Multimodal Fallback
   if (!defaultApiKey) {
     throw new Error("تعذر الاتصال بنموذج الذكاء الاصطناعي.");
   }
 
   const genAI = new GoogleGenAI({ apiKey: defaultApiKey });
-  const fallbackModels = ["gemini-3.7-flash", "gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
-  let lastError: any = null;
+  const modelToUse = isPro ? 'gemini-3.7-flash' : 'gemini-2.5-flash';
 
-  // Build current turn parts (including images/attachments)
   const currentParts: any[] = [];
   for (const att of attachments) {
     if (att.isImage || att.type.startsWith('image/') || att.type === 'application/pdf') {
@@ -166,39 +215,24 @@ export const getAIResponseStream = async (
     currentParts.push({ text: "تحليل المرفق" });
   }
 
-  for (const fallbackModel of fallbackModels) {
-    try {
-      const fallbackResponse = await genAI.models.generateContent({
-        model: fallbackModel,
-        contents: [...history, { role: "user", parts: currentParts }],
-        config: {
-          systemInstruction: fullInstruction,
-        },
-      });
+  const fallbackResponse = await genAI.models.generateContent({
+    model: modelToUse,
+    contents: [...history, { role: "user", parts: currentParts }],
+    config: { systemInstruction: fullInstruction },
+  });
 
-      if (fallbackResponse?.text) {
-        const text = fallbackResponse.text;
-        if (onChunk) onChunk(text);
-        return text;
-      }
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`Fallback to model ${fallbackModel} failed:`, err);
-    }
-  }
-
-  throw new Error(`تعذر معالجة الطلب: ${lastError?.message || "النموذج غير متاح حالياً"}`);
+  const text = fallbackResponse.text || "";
+  if (onChunk) onChunk(text);
+  return text;
 };
 
-/**
- * Standard non-streaming wrapper for backward compatibility.
- */
 export const getGeminiResponse = async (
   prompt: string,
   history: { role: string; parts: { text?: string }[] }[] = [],
   userMemory: string = "",
   userId: string = "",
-  attachments: ChatAttachment[] = []
+  attachments: ChatAttachment[] = [],
+  clientSubscription?: Partial<UserSubscription> | null
 ): Promise<string> => {
-  return getAIResponseStream(prompt, history as any, userMemory, userId, attachments);
+  return getAIResponseStream(prompt, history as any, userMemory, userId, attachments, undefined, clientSubscription);
 };

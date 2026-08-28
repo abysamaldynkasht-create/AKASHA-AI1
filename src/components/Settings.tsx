@@ -3,6 +3,7 @@ import { useAuth } from './AuthContext';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, updateDoc, deleteDoc, getDoc, setDoc, collection, addDoc } from 'firebase/firestore';
 import { getUserMemory } from '../lib/memoryService';
+import { DEFAULT_PLANS } from '../lib/subscriptionConfig';
 import { 
   X, User, Save, CheckCircle, Moon, Sun, Mail, HelpCircle, 
   CreditCard, Shield, Globe, ChevronRight, Brain, Trash2, 
@@ -52,7 +53,19 @@ const WORLD_LANGUAGES = [
 ];
 
 export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
-  const { user, profile } = useAuth();
+  const { 
+    user, 
+    profile, 
+    isPro, 
+    effectivePlan, 
+    usageCount, 
+    usageLimit, 
+    remainingRequests, 
+    openPricingModal, 
+    cancelSubscription,
+    upgradeSubscription
+  } = useAuth();
+  const planConfig = DEFAULT_PLANS[effectivePlan] || DEFAULT_PLANS.free;
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -70,7 +83,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
   // Language selection state
   const [langSearch, setLangSearch] = useState('');
-  const [selectedLanguage, setSelectedLanguage] = useState(profile?.language || 'العربية');
+  const [selectedLanguage, setSelectedLanguage] = useState((profile as any)?.language || 'العربية');
 
   // Subscription state
   const [selectedTier, setSelectedTier] = useState<'Standard' | 'Premium' | null>(null);
@@ -323,10 +336,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
               <section className="space-y-6">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-[#606060] uppercase tracking-wider">الملف الشخصي</h3>
-                  {profile?.subscriptionTier && profile.subscriptionTier !== 'none' && (
+                  {isPro ? (
                     <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
                       <Sparkles size={10} className="animate-pulse" />
-                      عضو {profile.subscriptionTier === 'Premium' ? 'احترافي (Premium)' : 'أساسي (Standard)'}
+                      عضو {planConfig.name_ar} (PRO Active)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] bg-white/5 text-[#A0A0A0] border border-white/10 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                      الخطة المجانية (FREE)
                     </span>
                   )}
                 </div>
@@ -503,9 +520,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                   />
                   <SettingsLink 
                     icon={<CreditCard size={18} />} 
-                    label="عرض الاشتراكات والترقية" 
-                    value={profile?.subscriptionTier && profile.subscriptionTier !== 'none' ? 'مشترك مميز' : 'الخطة المجانية'}
-                    onClick={() => setActiveSection('subscription')} 
+                    label="عرض باقات الاشتراك والترقية" 
+                    value={isPro ? 'PRO Active' : 'FREE'}
+                    onClick={() => {
+                      onClose();
+                      openPricingModal();
+                    }} 
                   />
                 </div>
               </section>
@@ -687,17 +707,23 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     <p className="text-[10px] text-[#606060]">قم بترقية تجربتك مع Akasha AI للوصول لقدرات غير محدودة</p>
                   </div>
 
-                  {profile?.subscriptionTier && profile.subscriptionTier !== 'none' && (
+                  {isPro && (
                     <div className="p-4 bg-primary/10 border border-primary/30 rounded-2xl space-y-3">
-                      <div className="flex items-center gap-2 text-primary font-bold text-xs">
-                        <Sparkles size={14} />
-                        <span>اشتراكك الحالي نشط بمزايا VIP!</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-primary font-bold text-xs">
+                          <Sparkles size={14} />
+                          <span>اشتراكك الحالي نشط بمزايا PRO!</span>
+                        </div>
+                        <span className="text-[10px] text-green-400 font-bold bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">
+                          PRO Active
+                        </span>
                       </div>
                       <p className="text-[11px] text-[#A0A0A0] leading-relaxed">
-                        أنت مشترك حالياً في <strong>الباقة {profile.subscriptionTier === 'Premium' ? 'الاحترافية (Premium)' : 'الأساسية (Standard)'}</strong>. نتوجه لك بخالص الشكر على دعمك وتطويرك للبرنامج.
+                        أنت مشترك حالياً في <strong>{planConfig.name_ar} ({planConfig.name})</strong>. 
+                        {profile?.subscription_end ? ` ينتهي في: ${new Date(profile.subscription_end).toLocaleDateString('ar-EG')}` : ''}
                       </p>
                       <button
-                        onClick={handleCancelSubscription}
+                        onClick={() => cancelSubscription()}
                         className="text-[10px] text-red-400 hover:text-red-300 transition-colors underline block"
                       >
                         إلغاء الاشتراك النشط حالياً

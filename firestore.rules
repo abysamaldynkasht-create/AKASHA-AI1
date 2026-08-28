@@ -25,10 +25,26 @@ service cloud.firestore {
     // ===============================================================
     // Domain Validators
     // ===============================================================
-    function isValidUserProfile(data) {
+    function isValidUserProfileCreate(data) {
       return data.get('uid', '') == request.auth.uid && 
              data.get('email', '') is string &&
-             data.get('createdAt', '') is string;
+             data.get('createdAt', '') is string &&
+             // Ensure new users default strictly to 'free' plan unless created by admin
+             (data.get('plan', 'free') == 'free' || isAdmin()) &&
+             (data.get('subscription_status', 'none') == 'none' || data.get('subscription_status', '') == 'active' || isAdmin());
+    }
+
+    function isValidUserProfileUpdate(data) {
+      return data.get('uid', '') == request.auth.uid && 
+             data.get('email', '') is string &&
+             // Users cannot arbitrarily escalate their plan or subscription status via client SDK
+             (
+               isAdmin() || 
+               (
+                 // Client cannot modify 'plan' or 'subscription_status' to PRO unless existing was already PRO or unchanged
+                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt', 'usage_count', 'last_reset_date', 'plan', 'subscription_status', 'subscription_id', 'subscription_start', 'subscription_end', 'usage_limit', 'cancel_at_period_end'])
+               )
+             );
     }
 
     function isValidChatSession(data, userId) {
@@ -67,9 +83,10 @@ service cloud.firestore {
     // Client and Subcollection Access Controls
     // ===============================================================
     match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data);
-      allow update: if isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUserProfileCreate(request.resource.data);
+      allow update: if (isOwner(userId) && isValidUserProfileUpdate(request.resource.data)) || isAdmin();
+      allow delete: if isAdmin();
 
       match /config/memory {
         allow read: if isOwner(userId);

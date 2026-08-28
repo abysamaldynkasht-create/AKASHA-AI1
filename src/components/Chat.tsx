@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
-import { getAIResponseStream, ChatAttachment } from '../lib/gemini';
+import { getAIResponseStream, ChatAttachment, LimitExceededError } from '../lib/gemini';
 import { getUserMemory, updateLongTermMemory } from '../lib/memoryService';
 import { 
   Send, 
@@ -16,7 +16,10 @@ import {
   X, 
   Maximize2, 
   FileCode,
-  AlertCircle
+  AlertCircle,
+  Crown,
+  Zap,
+  Lock
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,13 +40,30 @@ interface DisplayAttachment {
 }
 
 export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
-  const { user } = useAuth();
+  const { 
+    user, 
+    profile, 
+    isPro, 
+    effectivePlan, 
+    usageCount, 
+    usageLimit, 
+    remainingRequests, 
+    imageCount,
+    imageLimit,
+    remainingImages,
+    isAdmin, 
+    incrementUsage, 
+    incrementImageUsage,
+    openPricingModal 
+  } = useAuth();
+
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<DisplayAttachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limitWarning, setLimitWarning] = useState<string | null>(null);
   const [userMemory, setUserMemory] = useState<string>('');
   const [logoUrl, setLogoUrl] = useState(DEFAULT_LOGO_URL);
   const [logoError, setLogoError] = useState(false);
@@ -115,7 +135,33 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
+    const maxFileSize = isPro ? 50 * 1024 * 1024 : 5 * 1024 * 1024; // 50MB for PRO, 5MB for FREE
+
+    const fileArray = Array.from(files);
+    const newImageFiles = fileArray.filter(f => f.type.startsWith('image/'));
+    const currentStagedImages = attachments.filter(a => a.isImage).length;
+
+    // Check image limits
+    if (!isAdmin && newImageFiles.length > 0) {
+      if (imageCount + currentStagedImages >= imageLimit) {
+        setLimitWarning(`لقد استنفدت الحد اليومي المسموح به لرفع الصور (${imageLimit} صور يومياً). ${!isPro ? 'الخطة المجانية تتيح 10 صور يومياً. قم بالترقية إلى PRO لرفع صور ومستندات غير محدودة.' : ''}`);
+        openPricingModal();
+        return;
+      }
+
+      if (imageCount + currentStagedImages + newImageFiles.length > imageLimit) {
+        const availableSlots = Math.max(0, imageLimit - (imageCount + currentStagedImages));
+        alert(`يمكنك رفع ${availableSlots} صور إضافية فقط اليوم (الحد الأقصى ${imageLimit} صور يومياً). قم بالترقية إلى PRO لإلغاء القيود.`);
+        return;
+      }
+    }
+
+    fileArray.forEach((file) => {
+      if (file.size > maxFileSize) {
+        alert(`حجم الملف ${file.name} يتجاوز الحد المسموح (${isPro ? '50MB' : '5MB'}). ${!isPro ? 'قم بالترقية إلى PRO لرفع ملفات حتى 50MB.' : ''}`);
+        return;
+      }
+
       const isImg = file.type.startsWith('image/');
       const reader = new FileReader();
 
@@ -173,6 +219,13 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
   };
 
   const handleCameraCapture = (imageDataUrl: string) => {
+    const currentStagedImages = attachments.filter(a => a.isImage).length;
+    if (!isAdmin && (imageCount + currentStagedImages + 1) > imageLimit) {
+      setLimitWarning(`لقد استنفدت الحد اليومي المسموح به لرفع الصور (${imageLimit} صور يومياً). ${!isPro ? 'الخطة المجانية تتيح 10 صور يومياً. قم بالترقية إلى PRO لرفع صور ومستندات غير محدودة.' : ''}`);
+      openPricingModal();
+      return;
+    }
+
     setAttachments((prev) => [
       ...prev,
       {
@@ -217,14 +270,31 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
     e.preventDefault();
     if ((!input.trim() && attachments.length === 0) || !user || isLoading) return;
 
-    const userMessage = input.trim();
+    // Check client-side quota limit before initiating request
+    if (!isAdmin && remainingRequests <= 0) {
+      setLimitWarning(`لقد استنفدت حد ${usageLimit} رسالة لليوم في الخطة المجانية. قم بالترقية إلى PRO للمتابعة بلا انقطاع.`);
+      openPricingModal();
+      return;
+    }
+
     const currentAttachments = [...attachments];
+    const imageAttachmentsCount = currentAttachments.filter(a => a.isImage || a.type.startsWith('image/')).length;
+
+    // Check image upload limit before sending
+    if (!isAdmin && imageAttachmentsCount > 0 && (imageCount + imageAttachmentsCount) > imageLimit) {
+      setLimitWarning(`لقد استنفدت الحد اليومي لرفع الصور (${imageLimit} صور يومياً في الخطة المجانية). قم بالترقية إلى PRO لرفع وتحليل صور غير محدودة.`);
+      openPricingModal();
+      return;
+    }
+
+    const userMessage = input.trim();
 
     setInput('');
     setAttachments([]);
     setIsLoading(true);
     setStreamingText(null);
     setError(null);
+    setLimitWarning(null);
 
     try {
       let currentSessionId = sessionId;
@@ -271,7 +341,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         parts: [{ text: m.content }]
       }));
 
-      // Call streaming KAI-1 / AI API with multimodal attachments
+      // Call streaming KAI-1 / AI API with subscription verification
       const finalResponse = await getAIResponseStream(
         userMessage,
         history,
@@ -280,8 +350,15 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         currentAttachments as ChatAttachment[],
         (chunk) => {
           setStreamingText(chunk);
-        }
+        },
+        profile
       );
+
+      // Increment usage counts locally & in DB
+      await incrementUsage();
+      if (imageAttachmentsCount > 0) {
+        await incrementImageUsage(imageAttachmentsCount);
+      }
 
       // Add final assistant message to Firestore
       await addDoc(collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages'), {
@@ -299,7 +376,12 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
 
     } catch (err: any) {
       console.error("Chat Error:", err);
-      setError(err.message || "حدث خطأ أثناء الاتصال بالنموذج.");
+      if (err instanceof LimitExceededError) {
+        setLimitWarning(err.message);
+        openPricingModal();
+      } else {
+        setError(err.message || "حدث خطأ أثناء الاتصال بالنموذج.");
+      }
     } finally {
       setIsLoading(false);
       setStreamingText(null);
@@ -335,7 +417,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-8 lg:p-10 space-y-4 sm:space-y-6 md:space-y-8 custom-scrollbar">
         {messages.length === 0 && !isLoading && !streamingText && (
-          <div className="min-h-[70vh] flex flex-col items-center justify-center text-center space-y-3 sm:space-y-5 opacity-90 px-3 sm:px-4 my-auto">
+          <div className="min-h-[65vh] flex flex-col items-center justify-center text-center space-y-3 sm:space-y-5 opacity-90 px-3 sm:px-4 my-auto">
             <div className="w-14 h-14 sm:w-18 sm:h-18 md:w-20 md:h-20 bg-primary rounded-2xl sm:rounded-[2rem] flex items-center justify-center mb-1 shadow-2xl shadow-primary/20 overflow-hidden flex-shrink-0">
               {logoUrl && !logoError ? (
                 <img 
@@ -351,14 +433,16 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
             <div className="space-y-1.5 sm:space-y-2 max-w-md">
               <h2 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight">أهلاً بك في Akasha AI</h2>
               <p className="text-[#A0A0A0] font-medium text-xs sm:text-sm md:text-base leading-relaxed">
-                مساعدك الذكي المتكامل يدعم النصوص، الصور، الكاميرا المباشرة، وتحليل الملفات والمستندات.
+                مساعدك الذكي المتكامل المدعوم بنموذج KAI-1 مع دعم الرؤية الحاسوبية، الصوت، تحليل الملفات، وذاكرة سياقية طويلة المدى.
               </p>
             </div>
+
+            {/* Quick Starter Suggestions */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 w-full max-w-xl pt-3 sm:pt-6">
               <SuggestionCard text="التقط صورة واطلب تحليلها" onClick={() => setIsCameraOpen(true)} />
-              <SuggestionCard text="ارفع ملف كود أو نص لتلخيصه" onClick={() => fileInputRef.current?.click()} />
-              <SuggestionCard text="اشرح لي مفهوم الذكاء الاصطناعي" onClick={() => setInput('اشرح لي مفهوم الذكاء الاصطناعي')} />
-              <SuggestionCard text="اقترح أفكاراً لمشروع تقني جديد" onClick={() => setInput('اقترح أفكاراً لمشروع تقني جديد')} />
+              <SuggestionCard text="ارفع ملف كود أو مستند لتحليله" onClick={() => fileInputRef.current?.click()} />
+              <SuggestionCard text="اشرح لي بنية نموذج KAI-1" onClick={() => setInput('اشرح لي بنية وميزات نموذج KAI-1 المتطور')} />
+              <SuggestionCard text="اكتب كود بايثون متقدم لحل مشكلة" onClick={() => setInput('اكتب كود بايثون متقدم لمعالجة البيانات')} />
             </div>
           </div>
         )}
@@ -476,6 +560,29 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
 
       {/* Input Form Bar */}
       <div className="p-2.5 sm:p-4 md:p-6 bg-gradient-to-t from-bg-dark via-bg-dark to-transparent flex-shrink-0">
+        {/* Limit Warning Card */}
+        {limitWarning && (
+          <div className="max-w-4xl mx-auto mb-2 sm:mb-3 p-3.5 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent border border-primary/40 rounded-2xl text-xs sm:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xl">
+            <div className="flex items-center gap-2 text-[#F5F5DC]">
+              <Crown size={18} className="text-primary flex-shrink-0" />
+              <span>{limitWarning}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={openPricingModal}
+                className="px-3.5 py-1.5 bg-primary text-white rounded-xl font-black text-xs hover:bg-accent shadow-md shadow-primary/20 transition-all flex items-center gap-1"
+              >
+                <Zap size={13} />
+                <span>ترقية الحساب الآن</span>
+              </button>
+              <button onClick={() => setLimitWarning(null)} className="p-1 hover:text-white text-[#A0A0A0]">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* General Error Banner */}
         {error && (
           <div className="max-w-4xl mx-auto mb-2 sm:mb-3 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs sm:text-sm flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -595,7 +702,7 @@ export const Chat: React.FC<ChatProps> = ({ sessionId, onSessionCreated }) => {
         <div className="text-center mt-3 sm:mt-4 space-y-1">
           <p className="text-[8px] sm:text-[10px] text-[#505050] uppercase tracking-[0.2em] font-bold flex items-center justify-center gap-1.5">
             <Sparkles size={10} className="text-primary" />
-            Akasha AI - KAI-1 Multimodal & Streaming Model
+            Akasha AI - KAI-1 Multimodal & Streaming Engine
           </p>
           <p className="text-[9px] sm:text-[11px] text-[#606060] font-medium">
             Akasha هو نموذج ذكاء اصطناعي و قد ينتج عنه أخطاء
