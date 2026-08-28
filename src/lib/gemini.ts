@@ -227,14 +227,12 @@ export const getAIResponseStream = async (
     }
   }
 
-  // 4. Gemini SDK Multimodal Fallback
+  // 4. Gemini SDK Multimodal Fallback with Cascade
   if (!defaultApiKey) {
     throw new Error("تعذر الاتصال بنموذج الذكاء الاصطناعي.");
   }
 
   const genAI = new GoogleGenAI({ apiKey: defaultApiKey });
-  const modelToUse = 'gemini-3.7-flash';
-
   const currentParts: any[] = [];
   for (const att of attachments) {
     if (att.isImage || att.type.startsWith('image/') || att.type === 'application/pdf') {
@@ -253,15 +251,38 @@ export const getAIResponseStream = async (
     currentParts.push({ text: "تحليل المرفق" });
   }
 
-  const fallbackResponse = await genAI.models.generateContent({
-    model: modelToUse,
-    contents: [...history, { role: "user", parts: currentParts }],
-    config: { systemInstruction: fullInstruction },
-  });
+  const modelsCascade = [
+    'gemini-3.7-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-pro',
+  ];
 
-  const text = fallbackResponse.text || "";
-  if (onChunk) onChunk(text);
-  return text;
+  let lastError: any = null;
+  for (const modelName of modelsCascade) {
+    try {
+      const fallbackResponse = await genAI.models.generateContent({
+        model: modelName,
+        contents: [...history, { role: "user", parts: currentParts }],
+        config: { systemInstruction: fullInstruction },
+      });
+
+      const text = fallbackResponse.text || "";
+      if (text) {
+        if (onChunk) onChunk(text);
+        return text;
+      }
+    } catch (modelErr) {
+      console.warn(`Direct model ${modelName} error, attempting next in cascade:`, modelErr);
+      lastError = modelErr;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  return "عذراً، لم نتمكن من الحصول على رد حالياً بسبب ضغط مؤقت على الخوادم. يرجى المحاولة مرة أخرى.";
 };
 
 export const getGeminiResponse = async (

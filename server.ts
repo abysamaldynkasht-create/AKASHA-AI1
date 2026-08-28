@@ -454,7 +454,7 @@ app.post('/api/chat/stream', async (req, res) => {
       }
     }
 
-    // 8. Fallback to Gemini SDK for Vision / Failover
+    // 8. Fallback to Gemini SDK for Vision / Failover with Multi-Model Cascade & Retry
     if (!responseDelivered && ai) {
       try {
         const currentParts: any[] = [];
@@ -475,19 +475,44 @@ app.post('/api/chat/stream', async (req, res) => {
           currentParts.push({ text: 'تحليل المرفق' });
         }
 
-        const modelToUse = 'gemini-3.7-flash';
-        const fallbackResponse = await ai.models.generateContent({
-          model: modelToUse,
-          contents: [...history, { role: 'user', parts: currentParts }],
-          config: { systemInstruction: fullInstruction },
-        });
+        const modelsCascade = [
+          'gemini-3.7-flash',
+          'gemini-3.1-flash-lite',
+          'gemini-3.1-pro-preview',
+          'gemini-2.5-pro',
+        ];
 
-        const generatedText = fallbackResponse.text || '';
-        res.write(`data: ${JSON.stringify({ type: 'chunk', text: generatedText })}\n\n`);
-        responseDelivered = true;
+        let generatedText = '';
+        let lastError: any = null;
+
+        for (const modelName of modelsCascade) {
+          try {
+            console.log(`[Gemini Fallback] Attempting model: ${modelName}`);
+            const fallbackResponse = await ai.models.generateContent({
+              model: modelName,
+              contents: [...history, { role: 'user', parts: currentParts }],
+              config: { systemInstruction: fullInstruction },
+            });
+
+            if (fallbackResponse.text) {
+              generatedText = fallbackResponse.text;
+              responseDelivered = true;
+              break;
+            }
+          } catch (modelErr: any) {
+            console.warn(`[Gemini Fallback] Model ${modelName} failed (${modelErr?.status || modelErr?.message}), trying next in cascade...`);
+            lastError = modelErr;
+          }
+        }
+
+        if (responseDelivered && generatedText) {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', text: generatedText })}\n\n`);
+        } else if (lastError) {
+          throw lastError;
+        }
       } catch (geminiErr: any) {
         console.error('Gemini fallback error:', geminiErr);
-        res.write(`data: ${JSON.stringify({ type: 'error', error: geminiErr.message })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'النموذج يواجه ضغطاً مؤقتاً، يرجى إعادة المحاولة بعد لحظات.' })}\n\n`);
       }
     }
 
