@@ -4,9 +4,11 @@ import { doc, getDoc } from "firebase/firestore";
 import { UserSubscription } from "../types";
 
 // KAI-1 Endpoints
-export const KAI1_BASE_URL = "https://kai1-backend.up.railway.app";
+export const KAI1_BASE_URL = (import.meta as any).env?.VITE_KAI1_BASE_URL || "https://uploaded-minerals-vincent-rendered.trycloudflare.com";
+export const KAI1_FALLBACK_BASE_URL = "https://kai1-backend.up.railway.app";
 export const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
 export const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
+export const KAI1_API_KEY = (import.meta as any).env?.VITE_KAI1_API_KEY || "sk-di-hjaVm78VLPoT0qSwfWXNogKeBfCafMOd";
 
 // Default fallback key from environment
 const defaultApiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
@@ -157,73 +159,72 @@ export const getAIResponseStream = async (
   if (!hasImageAttachment) {
     const savedSessionId = typeof window !== 'undefined' ? localStorage.getItem("kai1_session_id") || null : null;
 
-    // 1. Try KAI-1 /api/kai1/chat
-    try {
-      const chatRes = await fetch(KAI1_CHAT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    const directCandidates = [
+      `${KAI1_BASE_URL}/api/kai1/chat`,
+      `${KAI1_BASE_URL}/api/kai1/stream`,
+      `${KAI1_BASE_URL}/chat`,
+      `${KAI1_BASE_URL}/api/chat`,
+      `${KAI1_BASE_URL}/generate`,
+      `${KAI1_FALLBACK_BASE_URL}/api/kai1/chat`,
+      `${KAI1_FALLBACK_BASE_URL}/api/kai1/stream`,
+    ];
+
+    for (const endpoint of directCandidates) {
+      try {
+        const payload = {
           message: augmentedPrompt || "مرحباً",
+          prompt: augmentedPrompt || "مرحباً",
           session_id: savedSessionId,
           history: formattedHistory,
           system_instruction: fullInstruction,
-        }),
-      });
+        };
 
-      if (chatRes.ok) {
-        const contentType = chatRes.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-          const data = await chatRes.json();
-          if (data?.session_id && typeof window !== 'undefined') {
-            localStorage.setItem("kai1_session_id", data.session_id);
-          }
-          const reply = data.reply || data.message || data.response || (typeof data === 'string' ? data : '');
-          if (reply) {
-            if (onChunk) onChunk(reply);
-            return reply;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (KAI1_API_KEY) {
+          headers["Authorization"] = `Bearer ${KAI1_API_KEY}`;
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await res.json();
+            if (data?.session_id && typeof window !== 'undefined') {
+              localStorage.setItem("kai1_session_id", data.session_id);
+            }
+            const reply = data.reply || data.message || data.response || data.text || (typeof data === 'string' ? data : '');
+            if (reply) {
+              if (onChunk) onChunk(reply);
+              return reply;
+            }
+          } else if (res.body) {
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let accumulatedText = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const chunk = decoder.decode(value, { stream: true });
+              accumulatedText += chunk;
+              if (onChunk) {
+                onChunk(accumulatedText);
+              }
+            }
+
+            if (accumulatedText.trim().length > 0) {
+              return accumulatedText;
+            }
           }
         }
+      } catch (endpointErr) {
+        // Try next endpoint
       }
-    } catch (chatErr) {
-      console.warn("Direct KAI-1 chat endpoint error:", chatErr);
-    }
-
-    // 2. Try KAI-1 /api/kai1/stream
-    try {
-      const payload = {
-        message: augmentedPrompt || "مرحباً",
-        session_id: savedSessionId,
-        history: formattedHistory,
-        system_instruction: fullInstruction,
-      };
-
-      const response = await fetch(KAI1_STREAM_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok && response.body) {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let accumulatedText = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          accumulatedText += chunk;
-          if (onChunk) {
-            onChunk(accumulatedText);
-          }
-        }
-
-        if (accumulatedText.trim().length > 0) {
-          return accumulatedText;
-        }
-      }
-    } catch (kaiError) {
-      console.warn("Direct KAI-1 stream error:", kaiError);
     }
   }
 

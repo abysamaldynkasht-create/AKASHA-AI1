@@ -23,9 +23,14 @@ const ai = geminiApiKey
   : null;
 
 // KAI-1 URL configurations
-const KAI1_BASE_URL = "https://kai1-backend.up.railway.app";
+const KAI1_BASE_URL = process.env.KAI1_BASE_URL || "https://uploaded-minerals-vincent-rendered.trycloudflare.com";
+const KAI1_FALLBACK_BASE_URL = "https://kai1-backend.up.railway.app";
 const KAI1_CHAT_URL = `${KAI1_BASE_URL}/api/kai1/chat`;
 const KAI1_STREAM_URL = `${KAI1_BASE_URL}/api/kai1/stream`;
+
+// DeepInfra & Model API Key configuration
+const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || "sk-di-hjaVm78VLPoT0qSwfWXNogKeBfCafMOd";
+const KAI1_API_KEY = process.env.KAI1_API_KEY || DEEPINFRA_API_KEY;
 
 // Server-side default plan limits
 const PLANS_BACKEND_CONFIG: Record<string, { usage_limit: number; image_limit: number; name: string; priority: boolean }> = {
@@ -355,101 +360,157 @@ app.post('/api/chat/stream', async (req, res) => {
 
     let responseDelivered = false;
 
-    // 7. Try KAI-1 Railway Endpoint (Chat & Stream) if no heavy multimodal images
+    // 7. Try KAI-1 Endpoint (Cloudflare Tunnel & Fallbacks)
     if (!hasImageAttachment) {
       const userSessionId = req.body.sessionId || req.body.session_id || null;
+      const formattedHistory = history.map((msg: any) => ({
+        role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
+        content: msg.parts?.[0]?.text || msg.content || '',
+      }));
 
-      // Try /api/kai1/chat endpoint first
-      try {
-        const kaiResponse = await fetch(KAI1_CHAT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: promptAugmented || 'مرحباً',
-            session_id: userSessionId,
-            history: history.map((msg: any) => ({
-              role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
-              content: msg.parts?.[0]?.text || msg.content || '',
-            })),
-            system_instruction: fullInstruction,
-          }),
-        });
+      const endpointCandidates = [
+        `${KAI1_BASE_URL}/api/kai1/chat`,
+        `${KAI1_BASE_URL}/api/kai1/stream`,
+        `${KAI1_BASE_URL}/chat`,
+        `${KAI1_BASE_URL}/api/chat`,
+        `${KAI1_BASE_URL}/generate`,
+        `${KAI1_FALLBACK_BASE_URL}/api/kai1/chat`,
+        `${KAI1_FALLBACK_BASE_URL}/api/kai1/stream`,
+      ];
 
-        if (kaiResponse.ok) {
-          const contentType = kaiResponse.headers.get('content-type') || '';
-          if (contentType.includes('application/json')) {
-            const data = await kaiResponse.json();
-            const reply = data.reply || data.message || data.response || (typeof data === 'string' ? data : '');
-            if (reply) {
-              // Stream text to client with session_id metadata
-              res.write(`data: ${JSON.stringify({ 
-                type: 'chunk', 
-                text: reply,
-                session_id: data.session_id || userSessionId 
-              })}\n\n`);
-              responseDelivered = true;
-            }
-          } else if (kaiResponse.body) {
-            // Streaming response
-            const reader = kaiResponse.body.getReader();
-            const decoder = new TextDecoder();
-            let streamText = '';
+      for (const endpointUrl of endpointCandidates) {
+        if (responseDelivered) break;
 
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const chunk = decoder.decode(value, { stream: true });
-              streamText += chunk;
-              res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
-            }
-
-            if (streamText.trim().length > 0) {
-              responseDelivered = true;
-            }
-          }
-        }
-      } catch (kaiChatErr) {
-        console.warn('KAI-1 chat endpoint error, trying stream fallback:', kaiChatErr);
-      }
-
-      // Try stream endpoint fallback if not delivered
-      if (!responseDelivered) {
         try {
-          const formattedHistory = history.map((msg: any) => ({
-            role: msg.role === 'model' || msg.role === 'assistant' ? 'assistant' : 'user',
-            content: msg.parts?.[0]?.text || msg.content || '',
-          }));
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (KAI1_API_KEY) {
+            headers['Authorization'] = `Bearer ${KAI1_API_KEY}`;
+          }
 
-          const kaiStreamRes = await fetch(KAI1_STREAM_URL, {
+          const kaiResponse = await fetch(endpointUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
               message: promptAugmented || 'مرحباً',
+              prompt: promptAugmented || 'مرحباً',
               session_id: userSessionId,
               history: formattedHistory,
               system_instruction: fullInstruction,
             }),
+            signal: AbortSignal.timeout(2000),
           });
 
-          if (kaiStreamRes.ok && kaiStreamRes.body) {
-            const reader = kaiStreamRes.body.getReader();
-            const decoder = new TextDecoder();
-            let streamText = '';
+          if (kaiResponse.ok) {
+            const contentType = kaiResponse.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const data = await kaiResponse.json();
+              const reply = data.reply || data.message || data.response || data.text || (typeof data === 'string' ? data : '');
+              if (reply) {
+                res.write(`data: ${JSON.stringify({ 
+                  type: 'chunk', 
+                  text: reply,
+                  session_id: data.session_id || userSessionId 
+                })}\n\n`);
+                responseDelivered = true;
+                break;
+              }
+            } else if (kaiResponse.body) {
+              const reader = kaiResponse.body.getReader();
+              const decoder = new TextDecoder();
+              let streamText = '';
 
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const chunk = decoder.decode(value, { stream: true });
-              streamText += chunk;
-              res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
-            }
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                streamText += chunk;
+                res.write(`data: ${JSON.stringify({ type: 'chunk', text: chunk })}\n\n`);
+              }
 
-            if (streamText.trim().length > 0) {
-              responseDelivered = true;
+              if (streamText.trim().length > 0) {
+                responseDelivered = true;
+                break;
+              }
             }
           }
-        } catch (streamErr) {
-          console.warn('KAI-1 stream endpoint error:', streamErr);
+        } catch (endpointErr) {
+          // Continue to next candidate
+        }
+      }
+
+      // 7.5. DeepInfra direct integration using DEEPINFRA_API_KEY
+      if (!responseDelivered && DEEPINFRA_API_KEY) {
+        const deepInfraCandidateModels = [
+          'deepseek-ai/DeepSeek-V3',
+          'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+          'Qwen/Qwen2.5-72B-Instruct',
+        ];
+
+        const openAiMessages = [
+          { role: 'system', content: fullInstruction },
+          ...formattedHistory.map((m: any) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content || '',
+          })),
+          { role: 'user', content: promptAugmented || 'مرحباً' },
+        ];
+
+        for (const modelId of deepInfraCandidateModels) {
+          if (responseDelivered) break;
+          try {
+            const diRes = await fetch('https://api.deepinfra.com/v1/openai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${DEEPINFRA_API_KEY}`,
+              },
+              body: JSON.stringify({
+                model: modelId,
+                messages: openAiMessages,
+                stream: true,
+              }),
+              signal: AbortSignal.timeout(4000),
+            });
+
+            if (diRes.ok && diRes.body) {
+              const reader = diRes.body.getReader();
+              const decoder = new TextDecoder();
+              let diBuffer = '';
+              let deliveredAny = false;
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                diBuffer += decoder.decode(value, { stream: true });
+                const lines = diBuffer.split('\n');
+                diBuffer = lines.pop() || '';
+
+                for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (trimmed.startsWith('data: ') && !trimmed.includes('[DONE]')) {
+                    try {
+                      const parsed = JSON.parse(trimmed.slice(6));
+                      const deltaText = parsed.choices?.[0]?.delta?.content;
+                      if (deltaText) {
+                        res.write(`data: ${JSON.stringify({ type: 'chunk', text: deltaText })}\n\n`);
+                        deliveredAny = true;
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
+
+              if (deliveredAny) {
+                responseDelivered = true;
+                break;
+              }
+            } else {
+              const errJson = await diRes.json().catch(() => null);
+              console.warn(`[DeepInfra ${modelId}] HTTP ${diRes.status}:`, errJson?.error?.message || errJson);
+            }
+          } catch (diErr) {
+            console.warn(`[DeepInfra ${modelId}] fetch error:`, diErr);
+          }
         }
       }
     }

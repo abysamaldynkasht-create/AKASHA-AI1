@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { User, onAuthStateChanged } from 'firebase/auth';
+import { User, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { auth, db, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { UserProfile, SubscriptionPlanId, UserSubscription } from '../types';
@@ -75,6 +75,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let unsubscribeProfile: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (!currentUser) {
+        try {
+          await signInAnonymously(auth);
+          return;
+        } catch (e) {
+          console.warn("Auto anonymous login fallback:", e);
+        }
+      }
       setUser(currentUser);
       if (currentUser) {
         setIsAdmin(currentUser.email === 'akashaai249@gmail.com');
